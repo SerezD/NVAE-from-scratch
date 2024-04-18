@@ -1,0 +1,30 @@
+name: nvae_from_scratch
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda==12.1
+  - cudatoolkit-dev
+  - ninja
+  - torchmetrics
+  - einops
+  - kornia
+  - matplotlib
+  - cupy
+  - pkg-config
+  - libjpeg-turbo>=2.1.4
+  - opencv
+  - numba==0.56.2  # solves import error!
+  - pip
+  - pip:
+      - ffcv
+      - tqdm
+      - scheduling_utils
+      - pytorch-model-summary
+      - wandb
+      - torch-fidelity
+      - foolbox  # adversarial attacks
