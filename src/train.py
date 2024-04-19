@@ -20,11 +20,12 @@ from torchvision.utils import make_grid
 from kornia.augmentation import AugmentationSequential, RandomHorizontalFlip
 from tqdm import tqdm
 
-from data.loading_utils import ffcv_loader
-from src.hl_autoencoders.NVAE.mine.distributions import DiscMixLogistic
-from src.hl_autoencoders.NVAE.mine.model import AutoEncoder
-from src.hl_autoencoders.NVAE.mine.utils import kl_balancer
 
+from src.modules.distributions import DiscMixLogistic
+from src.model import AutoEncoder
+from src.utils import kl_balancer
+
+# TODO FROM FFCV to NVIDIA DALI
 
 def parse_args():
 

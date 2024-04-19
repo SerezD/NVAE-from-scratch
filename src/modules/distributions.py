@@ -1,6 +1,6 @@
-import torch
-import numpy as np
 from einops import rearrange, repeat, pack
+import numpy as np
+import torch
 
 
 def gumbel_sampling(logits: torch.Tensor, temperature: float = 1.0):
@@ -201,10 +201,10 @@ class DiscMixLogistic:
         log_probs = torch.sum(log_probs, dim=2) + torch.nn.functional.log_softmax(self.logits, dim=1)
         return torch.logsumexp(log_probs, dim=1)
 
-    def sample(self, temperature: float = 1.):
+    def sample(self):
 
         # Gumbel Sampling of shape B, (H W) of indices in range 0 __ N_MIXTURES
-        logistic_selection_mask = gumbel_sampling(self.logits, temperature).unsqueeze(2)
+        logistic_selection_mask = gumbel_sampling(self.logits).unsqueeze(2)
 
         # select parameters and sum on NUM_MIXTURES --> B, C, (H W)
         selected_mu = torch.sum(self.means_logits * logistic_selection_mask, dim=1)
@@ -217,7 +217,7 @@ class DiscMixLogistic:
         base_sample = torch.zeros_like(selected_mu).uniform_(1e-5, 1. - 1e-5)  # avoiding corner values
         base_sample = torch.log(base_sample) - torch.log(1 - base_sample)
 
-        x = selected_mu + torch.exp(selected_scale) / temperature * base_sample  # B, C, (H W)
+        x = selected_mu + torch.exp(selected_scale) * base_sample  # B, C, (H W)
 
         # adjust given previous channels (clamp in -1, 1. range)
         r_x = torch.clamp(x[:, 0, :], -1., 1.)  # B, (H, W)

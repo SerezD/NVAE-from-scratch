@@ -1,5 +1,5 @@
 """
-check if reconstruction accuracy drops (is it an attack already?).
+TODO
 """
 import os
 
@@ -9,15 +9,12 @@ from einops import pack
 from torch.cuda.amp import autocast
 from torchvision.utils import make_grid
 
-from robustbench import load_cifar10
 
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 from src.hl_autoencoders.NVAE.mine.distributions import DiscMixLogistic
 from src.hl_autoencoders.NVAE.mine.model import AutoEncoder as NVAE
-from src.hl_autoencoders.NVAE.original.model import AutoEncoder
-from src.hl_autoencoders.NVAE.original.utils import get_arch_cells
 import torch.multiprocessing as mp
 import torch.distributed as dist
 

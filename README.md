@@ -10,3 +10,7 @@ resources list (git repos, paper, blog)
 critical parts of the code
 
 results
+
+# TODO
+
+refactor scripts

@@ -1,14 +1,15 @@
-import math
 from collections import OrderedDict
 
 from einops import pack, rearrange, einsum
 
 import torch
 from torch import nn
+from torch.nn import Conv2d
+from torch.nn.utils.parametrizations import weight_norm
 
-from src.hl_autoencoders.NVAE.mine.modules import ResidualCellEncoder, EncCombinerCell, NFBlock, ResidualCellDecoder, DecCombinerCell, \
-    ARConv2d, Conv2D
-from src.hl_autoencoders.NVAE.mine.distributions import Normal
+from src.modules.architecture import ResidualCellEncoder, EncCombinerCell, NFBlock, ResidualCellDecoder, \
+    DecCombinerCell, MaskedConv2d
+from src.modules.distributions import Normal
 
 
 class AutoEncoder(nn.Module):
@@ -97,8 +98,8 @@ class AutoEncoder(nn.Module):
         """
 
         preprocessing = OrderedDict()
-        preprocessing['init_conv'] = Conv2D(self.img_channels, self.base_channels, kernel_size=3, padding=1,
-                                            bias=True, weight_norm=True)
+        preprocessing['init_conv'] = weight_norm(Conv2d(self.img_channels, self.base_channels,
+                                                        kernel_size=3, padding=1))
 
         for b in range(self.n_preprocessing_blocks):
 
@@ -177,7 +178,7 @@ class AutoEncoder(nn.Module):
         channels = int(self.base_channels * self.ch_multiplier)
         encoder_0 = nn.Sequential(
             nn.ELU(),
-            Conv2D(channels, channels, kernel_size=1, bias=True, weight_norm=True),
+            weight_norm(Conv2d(channels, channels, kernel_size=1, bias=True)),
             nn.ELU())
 
         return encoder_tower, encoder_combiners, encoder_0
@@ -202,8 +203,10 @@ class AutoEncoder(nn.Module):
 
                 # encoder sampler
                 enc_sampler.add_module(f'sampler_{s}:{g}',
-                                       Conv2D(channels, 2 * self.num_latent_per_group,
-                                              kernel_size=3, padding=1, bias=True, weight_norm=True))
+                                       weight_norm(Conv2d(channels, 2 * self.num_latent_per_group,
+                                                          kernel_size=3, padding=1, bias=True)
+                                                   )
+                                       )
 
                 # build [optional] NF
                 if self.use_nf:
@@ -217,8 +220,8 @@ class AutoEncoder(nn.Module):
                     dec_sampler.add_module(f'sampler_{s}:{g}',
                                            nn.Sequential(
                                                nn.ELU(),
-                                               Conv2D(channels, 2 * self.num_latent_per_group,
-                                                      kernel_size=1, padding=0, bias=True, weight_norm=True)
+                                               weight_norm(Conv2d(channels, 2 * self.num_latent_per_group,
+                                                                  kernel_size=1, padding=0, bias=True))
                                            )
                                            )
 
@@ -301,7 +304,7 @@ class AutoEncoder(nn.Module):
 
         to_logits = nn.Sequential(
             nn.ELU(),
-            Conv2D(in_channels, out_channels, kernel_size=3, padding=1, bias=True, weight_norm=True)
+            weight_norm(Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=True))
         )
 
         return to_logits
@@ -316,7 +319,8 @@ class AutoEncoder(nn.Module):
 
         for n, layer in self.named_modules():
 
-            if isinstance(layer, Conv2D) or isinstance(layer, ARConv2d):
+            if isinstance(layer, Conv2d) or isinstance(layer, MaskedConv2d):
+                # TODO check MaskedConv2d works and is not counted twice
                 self.all_conv_layers.append(layer)
 
             if isinstance(layer, nn.SyncBatchNorm):
