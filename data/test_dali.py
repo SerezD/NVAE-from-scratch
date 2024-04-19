@@ -1,3 +1,5 @@
+import pathlib
+
 from matplotlib import gridspec
 from matplotlib import pyplot as plt
 from nvidia.dali import pipeline_def, fn
@@ -11,6 +13,21 @@ def image_label_pipeline():
     images = fn.decoders.image(jpegs, device='cpu')
     images = fn.resize(images.gpu(), size=256)
     return images, labels
+
+
+@pipeline_def
+def image_pipeline():
+
+    image_files = sorted(list(pathlib.Path(image_dir).rglob('*.png')) +
+                         list(pathlib.Path(image_dir).rglob('*.jpg')) +
+                         list(pathlib.Path(image_dir).rglob('*.bmp')) +
+                         list(pathlib.Path(image_dir).rglob('*.JPEG')))
+
+    # initial fill = dimension of the shuffling buffer
+    jpegs, _ = fn.readers.file(files=image_files, random_shuffle=True, initial_fill=4)
+    images = fn.decoders.image(jpegs, device='cpu')
+    images = fn.resize(images.gpu(), size=256)
+    return images
 
 
 def show_images(image_batch):
@@ -35,4 +52,12 @@ if __name__ == '__main__':
     pipe.build()
 
     images, labels = pipe.run()
+    show_images(images.as_cpu())
+
+    image_dir = './samples/without_classes/'
+
+    pipe = image_pipeline(batch_size=max_batch_size, num_threads=1, device_id=0)
+    pipe.build()
+
+    images = pipe.run()[0]
     show_images(images.as_cpu())
