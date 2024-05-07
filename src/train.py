@@ -4,6 +4,7 @@ import warnings
 import socket
 from typing import Any
 import wandb
+import yaml
 
 import numpy as np
 
@@ -17,17 +18,14 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from pytorch_model_summary import summary
 from torchvision.utils import make_grid
-from kornia.augmentation import AugmentationSequential, RandomHorizontalFlip
 from tqdm import tqdm
 
-
-from src.modules.distributions import DiscMixLogistic
+from data.loading_utils import ffcv_loader
 from src.model import AutoEncoder
 from src.utils import kl_balancer
 
-# TODO FROM FFCV to NVIDIA DALI
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser('NVAE training')
 
@@ -38,7 +36,7 @@ def parse_args():
                         help='.yaml configuration file')
 
     parser.add_argument('--data_path', type=str, required=True,
-                        help='directory of ffcv datasets (.beton files)')
+                        help='directory of ffcv datasets (train.beton and validation.beton)')
 
     parser.add_argument('--checkpoint_base_path', type=str, default='./runs/',
                         help='directory where checkpoints are saved')
@@ -73,8 +71,11 @@ def parse_args():
     return args
 
 
-def get_model_conf(filepath: str):
-    import yaml
+def get_model_conf(filepath: str) -> dict:
+    """
+    :param filepath: .yaml configuration file
+    :return: parameters as dictionary
+    """
 
     # load params
     with open(filepath, 'r', encoding='utf-8') as stream:
@@ -84,7 +85,9 @@ def get_model_conf(filepath: str):
 
 
 def setup(train_conf: dict):
-
+    """
+    setup distributed training and deterministic behavior fixing seeds
+    """
     if 'MASTER_ADDR' not in os.environ:
         os.environ["MASTER_ADDR"] = "localhost"
         if WORLD_RANK == 0:
@@ -112,32 +115,27 @@ def cleanup():
     dist.destroy_process_group()
 
 
-def prepare_data(rank: int, world_size: int, data_dir: str, conf: dict):
+def prepare_data(rank: int, world_size: int, data_path: str, conf: dict):
 
     image_size = conf['resolution'][1]
     batch_size = conf['training']['cumulative_bs'] // world_size
     seed = int(conf['training']['seed'])
     is_distributed = world_size > 1
 
-    train_dataloader = ffcv_loader(data_dir, batch_size, image_size, seed, rank, is_distributed)
-    val_dataloader = ffcv_loader(data_dir, batch_size, image_size, seed, rank, is_distributed, mode='validation')
-
-    train_augmentations = AugmentationSequential(RandomHorizontalFlip(p=0.5),
-                                                 same_on_batch=False)
+    train_dataloader = ffcv_loader(data_path, batch_size, image_size, seed, rank, is_distributed, is_train=True)
+    val_dataloader = ffcv_loader(data_path, batch_size, image_size, seed, rank, is_distributed, is_train=False)
 
     if WORLD_RANK == 0:
         print(f"[INFO] final batch size per device: {batch_size}")
 
-    return train_dataloader, val_dataloader, train_augmentations
+    return train_dataloader, val_dataloader,
 
 
-def epoch_train(dataloader: DataLoader, augmentations: AugmentationSequential,
-                model: AutoEncoder, optimizer: torch.optim.Optimizer, scheduler: Any,
+def epoch_train(dataloader: DataLoader, model: AutoEncoder, optimizer: torch.optim.Optimizer, scheduler: Any,
                 grad_scaler: GradScaler, kl_params: dict, sr_params: dict,
-                total_training_steps: int, global_step: int, run: wandb.run = None):
+                total_training_steps: int, global_step: int, run: wandb.run = None) -> int:
     """
     :param dataloader: train dataloader.
-    :param augmentations: augmentation module.
     :param model: model in training mode. Remember to pass ".module" with DDP.
     :param optimizer: optimizer object from torch.optim.Optimizer.
     :param scheduler: scheduler object from scheduling utils.
@@ -147,14 +145,13 @@ def epoch_train(dataloader: DataLoader, augmentations: AugmentationSequential,
     :param total_training_steps: total training steps on all epochs.
     :param global_step: used by scheduler.
     :param run: wandb run object (if rank is 0).
+    :return: global step after epoch
     """
 
     # for logging: loss, rec, kl, spectral, bn
     epoch_losses = torch.empty((0, 5), device=f"cuda:{LOCAL_RANK}")
 
-    for step, x in enumerate(tqdm(dataloader)):
-
-        x = augmentations(x[0])
+    for step, (x, ) in enumerate(tqdm(dataloader)):
 
         # scheduler step
         lr = scheduler.step(global_step)
@@ -168,10 +165,9 @@ def epoch_train(dataloader: DataLoader, augmentations: AugmentationSequential,
 
             # forward pass
             logits, kl_terms = model(x)
-            reconstructions = DiscMixLogistic(logits, img_channels=3, num_bits=8).log_prob(x)
 
             # reconstruction loss
-            rec_loss = - torch.sum(reconstructions, dim=1)
+            rec_loss = model.compute_reconstruction_loss(x, logits)
 
             # compute kl weight (Appendix A of NVAE paper, linear warmup of KL Term β for kl_anneal_portion of steps)
             beta = (global_step - float(kl_params["kl_const_portion"]) * total_training_steps)
@@ -196,10 +192,10 @@ def epoch_train(dataloader: DataLoader, augmentations: AugmentationSequential,
             else:
                 lambda_coeff = float(sr_params["weight_decay_norm"])
 
-            # add spectral regularization and batch norm regularization terms to loss
+            # compute and add spectral / batch norm regularization terms to loss
             spectral_norm_term = model.compute_sr_loss()
             batch_norm_term = model.batch_norm_loss()
-            loss += lambda_coeff * spectral_norm_term + lambda_coeff * batch_norm_term
+            loss += lambda_coeff * (spectral_norm_term + batch_norm_term)
 
         grad_scaler.scale(loss).backward()
         grad_scaler.step(optimizer)
@@ -212,10 +208,10 @@ def epoch_train(dataloader: DataLoader, augmentations: AugmentationSequential,
         #     a = p.detach().clone()
         #     dist.all_reduce(p.data, op=dist.ReduceOp.SUM)
         #     p.data /= WORLD_SIZE
-        #     if (a.data - p.data).sum().item() > 0:
+        #     if (a.data - p.data).sum().item() > 1e-3:
         #         flag = True
         #         count += 1
-        #         if count == 1:
+        #         if count == 1 and LOCAL_RANK == 0:
         #             print(f"AFTER BACKWARD: {n} is different across ranks!")
         #             print(f"SUM OF DIFFERENCES: {(a.data - p.data).sum().item()}")
         # if flag:
@@ -273,15 +269,14 @@ def epoch_validation(dataloader: DataLoader, model: AutoEncoder, global_step: in
     # for logging: loss, rec, kl
     epoch_losses = torch.empty((0, 3), device=f"cuda:{LOCAL_RANK}")
 
-    for step, x in enumerate(tqdm(dataloader)):
+    for step, (x, ) in enumerate(tqdm(dataloader)):
 
-        x = x[0].to(torch.float32)
+        x = x.to(torch.float32)
 
         logits, kl_all = model(x)
-        reconstructions = DiscMixLogistic(logits, img_channels=3, num_bits=8).log_prob(x)
 
         # reconstruction loss
-        rec_loss = - torch.sum(reconstructions, dim=1)
+        rec_loss = model.compute_reconstruction_loss(x, logits)
 
         final_kl, _, _ = kl_balancer(kl_all, balance=False)
         loss = rec_loss + final_kl
@@ -326,10 +321,11 @@ def main(args: argparse.Namespace, config: dict):
 
     train_conf = config['training']
 
+    # setup distributed and fix seeds
     setup(train_conf)
 
     # Get data loaders.
-    train_loader, val_loader, train_augmentations = prepare_data(LOCAL_RANK, WORLD_SIZE, args.data_path, config)
+    train_loader, val_loader = prepare_data(LOCAL_RANK, WORLD_SIZE, args.data_path, config)
 
     # create model and move it to GPU with id rank
     model = AutoEncoder(config['autoencoder'], config['resolution'])
@@ -399,8 +395,8 @@ def main(args: argparse.Namespace, config: dict):
 
         # Training
         ddp_model.train()
-        global_step = epoch_train(train_loader, train_augmentations, ddp_model.module, optimizer, scheduler,
-                                  grad_scaler, train_conf["kl_anneal"], train_conf["spectral_regularization"],
+        global_step = epoch_train(train_loader, ddp_model.module, optimizer, scheduler, grad_scaler,
+                                  train_conf["kl_anneal"], train_conf["spectral_regularization"],
                                   total_training_steps, global_step, run)
 
         # sync of all parameters
@@ -429,8 +425,7 @@ def main(args: argparse.Namespace, config: dict):
                     x = next(iter(val_loader))[0][:num_samples].to(torch.float32)
                     b, c, h, w = x.shape
 
-                    logits = ddp_model.module.autoencode(x, deterministic=True)
-                    x_rec = DiscMixLogistic(logits, img_channels=3, num_bits=8).mean()
+                    x_rec = ddp_model.module.reconstruct(x, deterministic=True)
 
                     display, _ = pack([x, x_rec], '* c h w')
                     display = make_grid(display, nrow=b)
@@ -438,9 +433,8 @@ def main(args: argparse.Namespace, config: dict):
                     run.log({f"media/reconstructions": display}, step=global_step)
 
                     # log samples
-                    for t in [0.7, 0.8, 0.9, 1.0]:
-                        logits = ddp_model.module.sample(num_samples, t, device='cuda:0')
-                        samples = DiscMixLogistic(logits, img_channels=3, num_bits=8).sample(t)
+                    for t in [0.4, 0.6, 0.8, 1.0]:
+                        samples = ddp_model.module.sample(num_samples, t, device='cuda:0')
                         display = wandb.Image(make_grid(samples, nrow=num_samples))
                         run.log({f"media/samples tau={t:.2f}": display}, step=global_step)
 
@@ -507,7 +501,7 @@ if __name__ == '__main__':
         WORLD_SIZE = int(os.environ['OMPI_COMM_WORLD_SIZE'])
         WORLD_RANK = int(os.environ['OMPI_COMM_WORLD_RANK'])
     else:
-        # launched with standard python, debugging only
+        # launched with standard python, debugging only (single gpu)
         print('[INFO] DEBUGGING MODE on single gpu!')
         LOCAL_RANK = 0
         WORLD_SIZE = 1

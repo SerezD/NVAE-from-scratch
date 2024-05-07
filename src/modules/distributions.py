@@ -131,16 +131,12 @@ class DiscMixLogistic:
     def log_prob(self, samples: torch.Tensor):
         """
         Args:
-            samples: ground truth images in 0_1 range.
+            samples: ground truth images in -1_1 range.
         Returns:
 
         """
-        assert torch.max(samples) <= 1.0 and torch.min(samples) >= 0.0
 
         b, _, h, w = samples.shape
-
-        # convert samples to be in [-1, 1]
-        samples = 2 * samples - 1.0
 
         # expand with num mixtures
         samples = repeat(samples, 'b c h w -> b n c (h w)', n=self.num_mixtures)
@@ -228,9 +224,8 @@ class DiscMixLogistic:
         b_x = x[:, 2, :] + selected_k[:, 1, :] * r_x + selected_k[:, 2, :] * g_x
         b_x = torch.clamp(b_x, -1., 1.)  # B, (H, W)
 
-        # move to 0-1 range --> B 3 (H W)
-        x = (pack([r_x.unsqueeze(1), g_x.unsqueeze(1), b_x.unsqueeze(1)], 'b * d')[0] + 1) / 2
-
+        # get final B 3 (H W)
+        x = pack([r_x.unsqueeze(1), g_x.unsqueeze(1), b_x.unsqueeze(1)], 'b * d')[0]
         return rearrange(x, 'b c (h w) -> b c h w', h=self.h, w=self.w)
 
     def mean(self):
@@ -254,7 +249,6 @@ class DiscMixLogistic:
         b_x = x[:, 2, :] + selected_k[:, 1, :] * r_x + selected_k[:, 2, :] * g_x
         b_x = torch.clamp(b_x, -1., 1.)  # B, (H, W)
 
-        # move to 0-1 range --> B 3 (H W)
-        x = (pack([r_x.unsqueeze(1), g_x.unsqueeze(1), b_x.unsqueeze(1)], 'b * d')[0] + 1) / 2
-
+        # get final B 3 (H W)
+        x = pack([r_x.unsqueeze(1), g_x.unsqueeze(1), b_x.unsqueeze(1)], 'b * d')[0]
         return rearrange(x, 'b c (h w) -> b c h w', h=self.h, w=self.w)

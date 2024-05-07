@@ -12,11 +12,18 @@ dependencies:
   - einops
   - kornia
   - matplotlib
+  # ffcv dependencies
+  - cupy
+  - pkg-config
+  - libjpeg-turbo>=2.1.4
+  - opencv
+  - numba==0.56.2  # solves import error!
   - pip
   - pip:
-      - nvidia-dali-cuda120
+      - ffcv
       - tqdm
       - scheduling_utils
       - pytorch-model-summary
+      - protobuf==3.20.*
       - wandb
       - torch-fidelity

@@ -3,13 +3,15 @@ from collections import OrderedDict
 from einops import pack, rearrange, einsum
 
 import torch
+from kornia.enhance import Normalize, Denormalize
 from torch import nn
 from torch.nn import Conv2d
-from torch.nn.utils.parametrizations import weight_norm
+# from torch.nn.utils.parametrizations import weight_norm
+from torch.nn.utils import weight_norm
 
 from src.modules.architecture import ResidualCellEncoder, EncCombinerCell, NFBlock, ResidualCellDecoder, \
     DecCombinerCell, MaskedConv2d
-from src.modules.distributions import Normal
+from src.modules.distributions import Normal, DiscMixLogistic
 
 
 class AutoEncoder(nn.Module):
@@ -26,6 +28,10 @@ class AutoEncoder(nn.Module):
         self.img_channels, self.image_resolution, _ = resolution
         self.base_channels, self.ch_multiplier = ae_args['initial_channels'], 1
         self.use_SE = use_SE
+
+        # normalization - denormalization
+        self.normalization = Normalize(mean=0.5, std=0.5)
+        self.denormalization = Denormalize(mean=0.5, std=0.5)
 
         # pre and post processing
         self.n_preprocessing_blocks = ae_args['num_pre-post_process_blocks']
@@ -452,7 +458,7 @@ class AutoEncoder(nn.Module):
         kl_losses = torch.empty((b, 0), device=gt_images.device)
 
         # preprocessing phase
-        normalized_images = (gt_images * 2) - 1.0  # in range -1 1
+        normalized_images = self.normalization(gt_images)
         x = self.preprocessing_block(normalized_images)
 
         # encoding tower phase
@@ -566,6 +572,12 @@ class AutoEncoder(nn.Module):
 
         return logits, kl_losses
 
+    def compute_reconstruction_loss(self, gt_images: torch.Tensor, logits: torch.Tensor):
+
+        gt_images = self.normalization(gt_images)
+        reconstructions = DiscMixLogistic(logits, img_channels=3, num_bits=8).log_prob(gt_images)
+        return - torch.sum(reconstructions, dim=1)
+
     def sample(self, num_samples: int, temperature: float, device: str = 'cpu'):
 
         # sample z_0
@@ -615,12 +627,113 @@ class AutoEncoder(nn.Module):
         # get logits for mixture
         logits = self.to_logits(x)
 
-        return logits
+        samples = DiscMixLogistic(logits, img_channels=3, num_bits=8).sample()
+        return self.denormalization(samples)
 
     def reconstruct(self, gt_images: torch.Tensor, deterministic: bool = False):
         """
         :param gt_images: images in 0__1 range
         :return:
         """
-        # TODO
-        pass
+
+        b = gt_images.shape[0]
+
+        # preprocessing phase
+        normalized_images = self.normalization(gt_images)
+        x = self.preprocessing_block(normalized_images)
+
+        # encoding tower phase
+        encoder_combiners_x = {}
+
+        for s in range(self.num_scales - 1, -1, -1):
+
+            scale = self.encoder_tower.get_submodule(f'scale_{s}')
+
+            for g in range(self.groups_per_scale[s]):
+
+                group = scale.get_submodule(f'group_{g}')
+
+                for c in range(self.num_cells_per_group):
+                    x = group.get_submodule(f'cell_{c}')(x)
+
+                # add intermediate x (will be used as combiner input for this scale)
+                if not (s == 0 and g == 0):
+                    encoder_combiners_x[f'{s}:{g}'] = x
+
+            if s > 0:
+                x = scale.get_submodule(f'downsampling')(x)
+
+        # encoder 0
+        x = self.encoder_0(x)
+
+        # obtain q(z_0|x), p(z_0) for KL loss, sample z_0
+
+        # encoder q(z_0|x)
+        mu_q, log_sig_q = torch.chunk(self.enc_sampler.get_submodule('sampler_0:0')(x), 2, dim=1)
+        dist_enc = Normal(mu_q, log_sig_q)
+
+        z_0 = dist_enc.mu if deterministic else dist_enc.sample()[0]
+
+        # apply normalizing flows
+        if self.use_nf:
+            z_0 = self.nf_cells.get_submodule('nf_0:0')(z_0)
+
+        # decoding phase
+
+        # start from constant prior
+        x = self.const_prior.expand(b, -1, -1, -1)
+
+        # first combiner (inject z_0)
+        x = self.decoder_combiners.get_submodule('combiner_0:0')(x, z_0)
+
+        for s in range(self.num_scales):
+
+            scale = self.decoder_tower.get_submodule(f'scale_{s}')
+
+            for g in range(self.groups_per_scale[s]):
+
+                if not (s == 0 and g == 0):
+
+                    # group forward
+                    group = scale.get_submodule(f'group_{g}')
+
+                    for c in range(self.num_cells_per_group):
+                        x = group.get_submodule(f'cell_{c}')(x)
+
+                    # obtain q(z_i|x, z_l>i), p(z_i|z_l>i) for KL loss, sample z_i
+                    # extract params for p (conditioned on previous decoding)
+                    mu_p, log_sig_p = torch.chunk(self.dec_sampler.get_submodule(f'sampler_{s}:{g}')(x), 2, dim=1)
+
+                    # extract params for q (conditioned on encoder features and previous decoding)
+                    enc_combiner = self.encoder_combiners.get_submodule(f'combiner_{s}:{g}')
+                    enc_sampler = self.enc_sampler.get_submodule(f'sampler_{s}:{g}')
+                    mu_q, log_sig_q = torch.chunk(
+                        enc_sampler(enc_combiner(encoder_combiners_x[f'{s}:{g}'], x)),
+                        2, dim=1)
+
+                    # sample z_i as combination of encoder and decoder params
+                    dist_enc = Normal(mu_p + mu_q, log_sig_p + log_sig_q)
+                    z_i = dist_enc.mu if deterministic else dist_enc.sample()[0]
+
+                    # apply NF
+                    if self.use_nf:
+                        z_i = self.nf_cells.get_submodule(f'nf_{s}:{g}')(z_i)
+
+                    # combine x and z_i
+                    x = self.decoder_combiners.get_submodule(f'combiner_{s}:{g}')(x, z_i)
+
+            # upsampling at the end of each scale
+            if s < self.num_scales - 1:
+                x = scale.get_submodule('upsampling')(x)
+
+        # postprocessing phase
+        x = self.postprocessing_block(x)
+
+        # get logits for mixture
+        logits = self.to_logits(x)
+
+        disc_mix = DiscMixLogistic(logits, img_channels=3, num_bits=8)
+        reconstructions = disc_mix.mean() if deterministic else disc_mix.sample()
+
+        return self.denormalization(reconstructions)
+
