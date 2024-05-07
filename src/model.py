@@ -326,7 +326,6 @@ class AutoEncoder(nn.Module):
         for n, layer in self.named_modules():
 
             if isinstance(layer, Conv2d) or isinstance(layer, MaskedConv2d):
-                # TODO check MaskedConv2d works and is not counted twice
                 self.all_conv_layers.append(layer)
 
             if isinstance(layer, nn.SyncBatchNorm):
@@ -442,9 +441,9 @@ class AutoEncoder(nn.Module):
         batch norm regularization term (also multiplied by λ)
         """
         loss = 0
-        for l in self.all_bn_layers:
-            if l.affine:
-                loss += torch.max(torch.abs(l.weight))
+        for layer in self.all_bn_layers:
+            if layer.affine:
+                loss += torch.max(torch.abs(layer.weight))
 
         return loss
 
@@ -633,6 +632,7 @@ class AutoEncoder(nn.Module):
     def reconstruct(self, gt_images: torch.Tensor, deterministic: bool = False):
         """
         :param gt_images: images in 0__1 range
+        :param deterministic: if True, use mean instead of sampling new latent variables
         :return:
         """
 
@@ -736,4 +736,3 @@ class AutoEncoder(nn.Module):
         reconstructions = disc_mix.mean() if deterministic else disc_mix.sample()
 
         return self.denormalization(reconstructions)
-
