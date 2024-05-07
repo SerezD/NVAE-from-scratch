@@ -37,7 +37,7 @@ def ffcv_loader(data_path: str, batch_size: int, image_size: int, seed: int, ran
 
         order = OrderOption.RANDOM if distributed else OrderOption.QUASI_RANDOM
 
-        loader = Loader(f'{data_path}/train.beton',
+        loader = Loader(data_path,
                         batch_size=batch_size,
                         num_workers=workers,
                         order=order,
@@ -52,7 +52,7 @@ def ffcv_loader(data_path: str, batch_size: int, image_size: int, seed: int, ran
 
         order = OrderOption.SEQUENTIAL
 
-        loader = Loader(f'{data_path}/validation.beton',
+        loader = Loader(data_path,
                         batch_size=batch_size,
                         num_workers=workers,
                         order=order,

@@ -7,14 +7,14 @@ autoencoder:
   num_scales: 3 # the number of downsamples in encoder tower (latent scales)
   num_groups_per_scale: 1 # number of groups (latent variables) per scale
   is_adaptive: false # Settings this to true will set different number of groups per scale (starting by num groups per scale and div by 2, up to min groups_per_scale)
-  min_groups_per_scale: 1 # the minimum number of groups per scale.
-  num_cells_per_group: 2 # number of cell for each conditional in encoder
-  num_latent_per_group: 16 # number of channels in group latent variables
-  num_nf_cells:  # guess that nf cells are useful especially in the first scales (high dependency between GLOBAL variables)
+  min_groups_per_scale: 1 # the minimum number of groups per scale (relevant only if is_adaptive).
+  num_cells_per_group: 2 # number of cells for each group in encoder
+  num_latent_per_group: 16 # number of channels in each latent variable
+  num_nf_cells:  # (optional) number of NF cells used in Encoder to ensure global dependency of latent variables.
   initial_channels: 128 # number of initial channels in encoder
   num_pre-post_process_blocks: 1 # number of pre/post processing blocks (each one down/up scales image)
   num_pre-post_process_cells: 2 # number of cells per pre/post processing block
-  num_logistic_mixtures: 10 # num of logistic
+  num_logistic_mixtures: 10 # num of logistic for the final Decoding from logits to RGB images
 
 training:
   seed: 1234

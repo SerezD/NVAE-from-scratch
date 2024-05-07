@@ -5,14 +5,9 @@ import torch
 from torch.cuda.amp import autocast
 import torch.multiprocessing as mp
 import torch.distributed as dist
-from torchvision.utils import make_grid
 
 from tqdm import tqdm
-from matplotlib import pyplot as plt
-import numpy as np
-
-from src.hl_autoencoders.NVAE.mine.distributions import DiscMixLogistic
-from src.hl_autoencoders.NVAE.mine.model import AutoEncoder
+from src.model import AutoEncoder
 
 
 def parse_args():
@@ -34,7 +29,7 @@ def parse_args():
     return args
 
 
-def setup(rank: int, world_size: int, train_conf: dict):
+def setup(rank: int, world_size: int):
 
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12345'
@@ -42,25 +37,9 @@ def setup(rank: int, world_size: int, train_conf: dict):
     # initialize the process group
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
-    # ensures that weight initializations are all the same
-    torch.manual_seed(train_conf['seed'])
-    np.random.seed(train_conf['seed'])
-    torch.cuda.manual_seed(train_conf['seed'])
-    torch.cuda.manual_seed_all(train_conf['seed'])
-
 
 def cleanup():
     dist.destroy_process_group()
-
-
-def get_model_conf(filepath: str):
-    import yaml
-
-    # load params
-    with open(filepath, 'r', encoding='utf-8') as stream:
-        params = yaml.safe_load(stream)
-
-    return params
 
 
 def update_bn(rank, args: argparse.Namespace, device: str = 'cuda:0'):
@@ -68,7 +47,7 @@ def update_bn(rank, args: argparse.Namespace, device: str = 'cuda:0'):
     checkpoint = torch.load(args.checkpoint_path, map_location='cpu')
     config = checkpoint['configuration']
 
-    setup(rank, 1, config['training'])
+    setup(rank, world_size=1)
 
     # create model and move it to GPU with id rank
     model = AutoEncoder(config['autoencoder'], config['resolution']).to(device)
@@ -86,7 +65,7 @@ def update_bn(rank, args: argparse.Namespace, device: str = 'cuda:0'):
         model.eval()
 
     # save updated checkpoint
-    checkpoint['state_dict_adjusted'] = model.to('cpu').state_dict()
+    checkpoint[f'state_dict_temp={args.temperature}'] = model.to('cpu').state_dict()
     torch.save(checkpoint, args.checkpoint_path)
 
     cleanup()

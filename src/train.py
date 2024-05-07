@@ -122,13 +122,15 @@ def prepare_data(rank: int, world_size: int, data_path: str, conf: dict):
     seed = int(conf['training']['seed'])
     is_distributed = world_size > 1
 
-    train_dataloader = ffcv_loader(data_path, batch_size, image_size, seed, rank, is_distributed, is_train=True)
-    val_dataloader = ffcv_loader(data_path, batch_size, image_size, seed, rank, is_distributed, is_train=False)
+    train_dataloader = ffcv_loader(f'{data_path}/train.beton', batch_size, image_size, seed, rank,
+                                   is_distributed, is_train=True)
+    val_dataloader = ffcv_loader(f'{data_path}/validation.beton', batch_size, image_size, seed, rank,
+                                 is_distributed, is_train=False)
 
     if WORLD_RANK == 0:
         print(f"[INFO] final batch size per device: {batch_size}")
 
-    return train_dataloader, val_dataloader,
+    return train_dataloader, val_dataloader
 
 
 def epoch_train(dataloader: DataLoader, model: AutoEncoder, optimizer: torch.optim.Optimizer, scheduler: Any,
