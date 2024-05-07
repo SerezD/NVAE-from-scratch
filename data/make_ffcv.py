@@ -92,7 +92,7 @@ def create_beton_wrapper(torch_dataset: Dataset, output_path: str, fields: tuple
     :param shuffle_indices: Shuffle order of the dataset. (optional argument of from_indexed_dataset method)
     """
 
-    def field_to_str(f: Field) -> str:
+    def field_to_str(field: Field) -> str:
         mapping = {RGBImageField: "image",
                    BytesField: "bytes",
                    IntField: "int",
@@ -100,30 +100,30 @@ def create_beton_wrapper(torch_dataset: Dataset, output_path: str, fields: tuple
                    NDArrayField: "array",
                    JSONField: "json",
                    TorchTensorField: "tensor"}
-        return mapping[f]
+        return mapping[field]
 
-    def obj_to_field(obj: Any) -> Field:
+    def obj_to_field(object_: Any) -> Field:
 
-        if isinstance(obj, PILImage):
+        if isinstance(object_, PILImage):
             return RGBImageField(write_mode="jpg")
 
-        elif isinstance(obj, int):
+        elif isinstance(object_, int):
             return IntField()
 
-        elif isinstance(obj, float):
+        elif isinstance(object_, float):
             return FloatField()
 
-        elif isinstance(obj, np.ndarray) and not isinstance(obj[0], np.uint8):
-            return NDArrayField(obj.dtype, obj.shape)
+        elif isinstance(object_, np.ndarray) and not isinstance(object_[0], np.uint8):
+            return NDArrayField(object_.dtype, object_.shape)
 
-        elif isinstance(obj, np.ndarray) and isinstance(obj[0], np.uint8):
+        elif isinstance(object_, np.ndarray) and isinstance(object_[0], np.uint8):
             return BytesField()
 
-        elif isinstance(obj, dict):
+        elif isinstance(object_, dict):
             return JSONField()
 
-        elif isinstance(obj, torch.Tensor):
-            return TorchTensorField(obj.dtype, obj.shape)
+        elif isinstance(object_, torch.Tensor):
+            return TorchTensorField(object_.dtype, object_.shape)
 
         else:
             raise AttributeError(f"FFCV dataset can not manage {type(obj)} objects")

@@ -2,11 +2,6 @@ import argparse
 import os
 
 import torch
-from torch.cuda.amp import autocast
-from torchvision.utils import make_grid
-
-
-from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 from data.loading_utils import ffcv_loader

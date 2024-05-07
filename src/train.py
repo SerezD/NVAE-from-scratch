@@ -4,7 +4,6 @@ import warnings
 import socket
 from typing import Any
 import wandb
-import yaml
 
 import numpy as np
 
@@ -20,9 +19,8 @@ from pytorch_model_summary import summary
 from torchvision.utils import make_grid
 from tqdm import tqdm
 
-from data.loading_utils import ffcv_loader
 from src.model import AutoEncoder
-from src.utils import kl_balancer
+from src.utils import kl_balancer, get_model_conf, prepare_data
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,19 +69,6 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def get_model_conf(filepath: str) -> dict:
-    """
-    :param filepath: .yaml configuration file
-    :return: parameters as dictionary
-    """
-
-    # load params
-    with open(filepath, 'r', encoding='utf-8') as stream:
-        params = yaml.safe_load(stream)
-
-    return params
-
-
 def setup(train_conf: dict):
     """
     setup distributed training and deterministic behavior fixing seeds
@@ -113,24 +98,6 @@ def setup(train_conf: dict):
 
 def cleanup():
     dist.destroy_process_group()
-
-
-def prepare_data(rank: int, world_size: int, data_path: str, conf: dict):
-
-    image_size = conf['resolution'][1]
-    batch_size = conf['training']['cumulative_bs'] // world_size
-    seed = int(conf['training']['seed'])
-    is_distributed = world_size > 1
-
-    train_dataloader = ffcv_loader(f'{data_path}/train.beton', batch_size, image_size, seed, rank,
-                                   is_distributed, is_train=True)
-    val_dataloader = ffcv_loader(f'{data_path}/validation.beton', batch_size, image_size, seed, rank,
-                                 is_distributed, is_train=False)
-
-    if WORLD_RANK == 0:
-        print(f"[INFO] final batch size per device: {batch_size}")
-
-    return train_dataloader, val_dataloader
 
 
 def epoch_train(dataloader: DataLoader, model: AutoEncoder, optimizer: torch.optim.Optimizer, scheduler: Any,
@@ -202,22 +169,6 @@ def epoch_train(dataloader: DataLoader, model: AutoEncoder, optimizer: torch.opt
         grad_scaler.scale(loss).backward()
         grad_scaler.step(optimizer)
         grad_scaler.update()
-
-        # TODO TEST
-        # flag = False
-        # count = 0
-        # for n, p in model.named_parameters():
-        #     a = p.detach().clone()
-        #     dist.all_reduce(p.data, op=dist.ReduceOp.SUM)
-        #     p.data /= WORLD_SIZE
-        #     if (a.data - p.data).sum().item() > 1e-3:
-        #         flag = True
-        #         count += 1
-        #         if count == 1 and LOCAL_RANK == 0:
-        #             print(f"AFTER BACKWARD: {n} is different across ranks!")
-        #             print(f"SUM OF DIFFERENCES: {(a.data - p.data).sum().item()}")
-        # if flag:
-        #     raise RuntimeError(f"AFTER BACKWARD: {count} parameters diverge!")
 
         # to log at each step
         dist.all_reduce(kl_gammas, op=dist.ReduceOp.SUM)
@@ -402,7 +353,9 @@ def main(args: argparse.Namespace, config: dict):
                                   total_training_steps, global_step, run)
 
         # sync of all parameters
-        # TODO after refactor of weight norm check if still needed!
+        # Note: due to some unknown problem, parameters across devices go out of sync. This apparently happens also in
+        # the original implementation by NVIDIA (they perform the same manual syncing).
+        # If someone finds the cause of this behaviour, please fill an issue or pull request.
         for p in ddp_model.module.parameters():
             dist.all_reduce(p.data, op=dist.ReduceOp.SUM)
             p.data /= WORLD_SIZE
@@ -479,17 +432,24 @@ def main(args: argparse.Namespace, config: dict):
 
 
 if __name__ == '__main__':
+    """
+    Infos on how to Run the script 
+    
+    On a multinode cluster I use mpi (enables to run only from master node)
+    
+    mpirun -np world_size -H ip_node_0:n_gpus,ip_node_1:n_gpus ... -x MASTER_ADDR=ip_master -x MASTER_PORT=1234
+    -bind-to none -map-by slot -mca pml ob1 -mca btl ^openib
+    python train.py --args
+    
+    On a single node (multi gpu) local environment I use torchrun
+    
+    torchrun --nproc_per_node=ngpus --nnodes=1 --node_rank=0 --master_addr='localhost'
+    --master_port=1234 train.py --args
+    
+    For debugging on 1 GPU simply run the script
+    python train.py --args
 
-    # on multinode cluster use mpi (enables to run only from master node)
-    # on single_node local environment use torchrun
-    # for debugging do not use anything (works only on 1 gpu)
-
-    # torchrun --nproc_per_node=ngpus --nnodes=1 --node_rank=0 --master_addr='localhost'
-    # --master_port=1234 main.py --> args
-
-    # mpirun -np world_size -H ip_node_0:n_gpus,ip_node_1:n_gpus ... -x MASTER_ADDR=ip_master -x MASTER_PORT=1234
-    # -bind-to none -map-by slot -mca pml ob1 -mca btl ^openib
-    # python main.py --args
+    """
 
     # Environment variables set by torch.distributed.launch or mpirun
     if 'LOCAL_RANK' in os.environ:

@@ -1,7 +1,39 @@
+import yaml
 import torch
 
+from data.loading_utils import ffcv_loader
 
-def kl_balancer(kl_unbalanced_terms: torch.Tensor, beta: float = 1.0, balance: bool = False, alpha: torch.Tensor = None):
+
+def get_model_conf(filepath: str) -> dict:
+    """
+    :param filepath: .yaml configuration file
+    :return: parameters as dictionary
+    """
+
+    # load params
+    with open(filepath, 'r', encoding='utf-8') as stream:
+        params = yaml.safe_load(stream)
+
+    return params
+
+
+def prepare_data(rank: int, world_size: int, data_path: str, conf: dict):
+
+    image_size = conf['resolution'][1]
+    batch_size = conf['training']['cumulative_bs'] // world_size
+    seed = int(conf['training']['seed'])
+    is_distributed = world_size > 1
+
+    train_dataloader = ffcv_loader(f'{data_path}/train.beton', batch_size, image_size, seed, rank,
+                                   is_distributed, is_train=True)
+    val_dataloader = ffcv_loader(f'{data_path}/validation.beton', batch_size, image_size, seed, rank,
+                                 is_distributed, is_train=False)
+
+    return train_dataloader, val_dataloader
+
+
+def kl_balancer(kl_unbalanced_terms: torch.Tensor, beta: float = 1.0, balance: bool = False,
+                alpha: torch.Tensor = None):
 
     if balance and beta < 1.0:
 
