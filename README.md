@@ -95,7 +95,7 @@ _Note: check the single scripts for a description of the arguments to be passed.
 ## Results
 
 Some pretrained models and their configuration files can be downloaded from: 
-[https://drive.google.com/drive/folders/1rr3Qm_aH-aT7B3XWkPjOWFrargJ_bpey?usp=sharing](https://drive.google.com/drive/folders/1rr3Qm_aH-aT7B3XWkPjOWFrargJ_bpey?usp=sharing)
+[https://huggingface.co/SerezD/NVAE-from-scratch](https://huggingface.co/SerezD/NVAE-from-scratch)
 
 ### CIFAR 10 (Unconditioned)
 
