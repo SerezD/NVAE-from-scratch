@@ -111,5 +111,24 @@ One version has additional normalizing flows cells.
 | NVAE 8x3 NF | 0.8         | 03.223    | 24.73 | 6.53 +- 0.22 |            707.403 M |
 | NVAE 8x3 NF | 1.0         | 00.997    | 33.28 | 5.80 +- 0.13 |            707.403 M |
 
-Random Samples from NVAE 8x3 NF (temp 0.6):
+Random Samples from NVAE 8x3 NF (temp 0.6):  
 ![8x3_NF_0.6](./images/8x3_NF_0.6.png)
+
+### CELEBA 64x64
+
+The trained model has 3 scales, each one with 8 groups (24 latents in total). 
+
+| Run Name    | Temperature | L2 (1e-5) | FID   | IS           | # (trainable) params |  
+|-------------|-------------|-----------|-------|--------------|---------------------:|
+| NVAE 8x3    | 0.6         | 02.751    | 14.86 | 2.20 +- 0.03 |            705.678 M |
+| NVAE 8x3    | 0.8         | 01.996    | 12.82 | 2.18 +- 0.06 |            705.678 M |
+| NVAE 8x3    | 1.0         | 01.746    | 15.10 | 2.16 +- 0.05 |            705.678 M |
+
+Random Samples (temp 0.6):  
+![celeba64_0.6](./images/celeba64_0.6.png)
+
+Random Samples (temp 0.8):  
+![celeba64_0.6](./images/celeba64_0.8.png)
+
+Random Samples (temp 1.0):  
+![celeba64_0.6](./images/celeba64_1.0.png)
