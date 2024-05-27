@@ -6,8 +6,7 @@ import torch
 from kornia.enhance import Normalize, Denormalize
 from torch import nn
 from torch.nn import Conv2d
-# from torch.nn.utils.parametrizations import weight_norm
-from torch.nn.utils import weight_norm
+from torch.nn.utils.parametrizations import weight_norm
 
 from src.modules.architecture import ResidualCellEncoder, EncCombinerCell, NFBlock, ResidualCellDecoder, \
     DecCombinerCell, MaskedConv2d

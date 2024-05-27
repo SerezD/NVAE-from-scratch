@@ -3,8 +3,7 @@ from einops import rearrange
 import torch
 from torch import nn
 from torch.nn import SyncBatchNorm, SiLU, Conv2d
-# from torch.nn.utils.parametrizations import weight_norm
-from torch.nn.utils import weight_norm
+from torch.nn.utils.parametrizations import weight_norm
 
 
 class MaskedConv2d(nn.Conv2d):
